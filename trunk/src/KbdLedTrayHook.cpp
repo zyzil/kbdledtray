@@ -66,7 +66,7 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 extern "C" {
 #endif
 
-extern "C" DWORD __declspec(dllexport) InstallHook(HOOKCALLBACK callback)
+DWORD __declspec(dllexport) InstallHook(HOOKCALLBACK callback)
 {
 	if (!callback)
 		return ERROR_INVALID_PARAMETER;
@@ -80,7 +80,7 @@ extern "C" DWORD __declspec(dllexport) InstallHook(HOOKCALLBACK callback)
 	return 0;
 }
 
-extern "C" void __declspec(dllexport) RemoveHook()
+void __declspec(dllexport) RemoveHook()
 {
 	UnhookWindowsHookEx(m_hKeyboardHook);
 }
