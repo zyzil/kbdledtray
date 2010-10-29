@@ -38,19 +38,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <ShellAPI.h>
-#include "KbdLedTrayHook.h"
 
 // Constants
-const UINT WM_USER_UPDATELEDSTATUS = WM_USER + 1;
-const UINT WM_USER_NOTIFYICON = WM_USER + 2;
+const UINT WM_USER_NOTIFYICON = WM_USER + 1;
 const UINT IDM_EXIT = 1001;
+const UINT IDT_KBDTIMER = 1;
 
 // Vars
 HINSTANCE m_hInstance = NULL;
 HWND m_hWnd = NULL;
-HMODULE m_hHookDll = NULL;
-INSTALLHOOK m_pInstallHook = NULL;
-REMOVEHOOK m_pRemoveHook = NULL;
 HANDLE m_hMutex = NULL;
 HMENU m_hMenu = NULL;
 
@@ -58,9 +54,6 @@ HMENU m_hMenu = NULL;
 HMENU CreateTaskbarMenu();
 void ErrorExit(DWORD);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-void CALLBACK HookCallback(int, WPARAM, LPARAM);
-DWORD InstallHook();
-void RemoveHook();
 HICON DrawCustomIcon(bool, bool, bool);
 void UpdateTrayIcon(bool);
 
@@ -94,33 +87,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 	m_hWnd = CreateWindow(wcex.lpszClassName, L"KbdLedTrayWnd", WS_OVERLAPPEDWINDOW, 
 		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, NULL, NULL, hInstance, NULL);
 
-	if (!m_hWnd) ErrorExit(GetLastError());
-
-	// Load hook DLL
-	m_hHookDll = LoadLibrary(L"KbdLedTrayHook.dll");
-	if (!m_hHookDll) 
+	if (!m_hWnd) 
 		ErrorExit(GetLastError());
-
-	m_pInstallHook = (INSTALLHOOK)GetProcAddress(m_hHookDll, "InstallHook");
-	if (!m_pInstallHook) 
-		ErrorExit(GetLastError());
-
-	m_pRemoveHook = (REMOVEHOOK)GetProcAddress(m_hHookDll, "RemoveHook");
-	if (!m_pRemoveHook) 
-		ErrorExit(GetLastError());
-
-	// Hook keyboard
-	DWORD dwResult = m_pInstallHook(HookCallback);
-	if (dwResult != 0) 
-		ErrorExit(GetLastError());
-
-	// Initialize tray icon
-	UpdateTrayIcon(false);
 
 	// Setup menu
 	m_hMenu = CreateTaskbarMenu();
 	if (!m_hMenu)
 		ErrorExit(GetLastError());
+
+	// Start timer for monitoring keys
+	SetTimer(m_hWnd, IDT_KBDTIMER, 250, NULL);
 
 	// Main message loop:
 	MSG msg;
@@ -130,19 +106,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 		DispatchMessage(&msg);
 	}
 
-	// Unhook keyboard
-	m_pRemoveHook();
-
-	// Remove tray icon
+	// Cleanup
+	KillTimer(m_hWnd, IDT_KBDTIMER);
 	UpdateTrayIcon(true);
-
 	DestroyMenu(m_hMenu);
-
-	if (m_hMutex)
-	{
-		ReleaseMutex(m_hMutex);
-		m_hMutex = NULL;
-	}
+	ReleaseMutex(m_hMutex);
 
 	return (int)msg.wParam;
 }
@@ -174,6 +142,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			PostQuitMessage(0);
 
 		break;
+	
+	case WM_TIMER:
+		if (wParam == IDT_KBDTIMER)
+			UpdateTrayIcon(false);
+
+		break;
 
 	case WM_USER_NOTIFYICON:
 		if (lParam == WM_RBUTTONUP)
@@ -196,27 +170,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		PostQuitMessage(0);
 		break;
 
-	case WM_USER_UPDATELEDSTATUS:
-		UpdateTrayIcon(false);
-		break;
-
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
 	}
 
 	return 0;
-}
-
-void CALLBACK HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
-{
-	if (nCode >= 0 && wParam == WM_KEYUP)
-	{
-		KBDLLHOOKSTRUCT* ll = (KBDLLHOOKSTRUCT*)lParam;
-		if (ll->vkCode == VK_CAPITAL || ll->vkCode == VK_NUMLOCK || ll->vkCode == VK_SCROLL)
-		{
-			PostMessage(m_hWnd, WM_USER_UPDATELEDSTATUS, 0, 0);
-		}
-	}
 }
 
 HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
@@ -296,28 +254,41 @@ HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
 void UpdateTrayIcon(bool remove)
 {
 	static bool iconRegistered = false;
+	
+	static bool capsOnPrevious = false;
+	static bool numOnPrevious = false;
+	static bool scrollOnPrevious = false;
+
 	bool capsOn = (GetKeyState(VK_CAPITAL) & 1) == 1;
 	bool numOn = (GetKeyState(VK_NUMLOCK) & 1) == 1;
 	bool scrollOn = (GetKeyState(VK_SCROLL) & 1) == 1;
 
-	NOTIFYICONDATA icon = {0};
-	icon.cbSize = sizeof(NOTIFYICONDATA);
-	icon.hWnd = m_hWnd;
-	icon.uCallbackMessage = WM_USER_NOTIFYICON;
-	icon.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-	icon.hIcon = DrawCustomIcon(capsOn, numOn, scrollOn);	
-	InvalidateRect(m_hWnd, NULL, TRUE);
+	if (remove || !iconRegistered ||
+		capsOn != capsOnPrevious || numOn != numOnPrevious || scrollOn != scrollOnPrevious)
+	{
+		capsOnPrevious = capsOn;
+		numOnPrevious = numOn;
+		scrollOnPrevious = scrollOn;
 
-	swprintf_s(icon.szTip, L"Caps Lock: %s\nNum Lock: %s\nScroll Lock: %s", 
-		(capsOn ? L"ON" : L"OFF"), (numOn ? L"ON" : L"OFF"), (scrollOn ? L"ON" : L"OFF"));
+		NOTIFYICONDATA icon = {0};
+		icon.cbSize = sizeof(NOTIFYICONDATA);
+		icon.hWnd = m_hWnd;
+		icon.uCallbackMessage = WM_USER_NOTIFYICON;
+		icon.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+		icon.hIcon = DrawCustomIcon(capsOn, numOn, scrollOn);	
+		InvalidateRect(m_hWnd, NULL, TRUE);
 
-	DWORD message = remove 
-		? NIM_DELETE 
-		: iconRegistered
-			? NIM_MODIFY : 0;		
+		swprintf_s(icon.szTip, L"Caps Lock: %s\nNum Lock: %s\nScroll Lock: %s", 
+			(capsOn ? L"ON" : L"OFF"), (numOn ? L"ON" : L"OFF"), (scrollOn ? L"ON" : L"OFF"));
 
-	Shell_NotifyIcon(message, &icon);
+		DWORD message = remove 
+			? NIM_DELETE 
+			: iconRegistered
+				? NIM_MODIFY : 0;		
+
+		Shell_NotifyIcon(message, &icon);
 	
-	if (!iconRegistered)
-		iconRegistered = true;
+		if (!iconRegistered)
+			iconRegistered = true;
+	}
 }
