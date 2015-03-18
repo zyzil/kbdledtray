@@ -1,4 +1,4 @@
-Copyright (c) 2010, Kevin Mullins
+Copyright (c) 2015, Kevin Mullins
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2010, Kevin Mullins
+Copyright (c) 2015, Kevin Mullins
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -26,23 +26,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 // Includes
-#include <winsdkver.h>
-#if !defined(_WIN32_WINNT)
-	#define _WIN32_WINNT 0x0501
-#endif
-#include <sdkddkver.h>
-#if !defined(WIN32_LEAN_AND_MEAN)
-	#define WIN32_LEAN_AND_MEAN
-#endif
+#define _WIN32_WINNT 0x0501
+#define WIN32_LEAN_AND_MEAN
+#define VC_EXTRALEAN
 #include <windows.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <ShellAPI.h>
 
 // Constants
 const UINT WM_USER_NOTIFYICON = WM_USER + 1;
 const UINT IDM_EXIT = 1001;
 const UINT IDT_KBDTIMER = 1;
+const wchar_t ON_TEXT[] = L"ON";
+const wchar_t OFF_TEXT[] = L"OFF";
+const wchar_t APP_NAME[] = L"KbdLedTray";
 
 // Vars
 HINSTANCE m_hInstance = NULL;
@@ -58,36 +54,38 @@ HICON DrawCustomIcon(bool, bool, bool);
 void UpdateTrayIcon(bool);
 
 // Entry point
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
+int __stdcall main()
 {
+	m_hInstance = GetModuleHandle(nullptr);
+
 	// Mutex
-	m_hMutex = CreateMutex(NULL, TRUE, L"KbdLedTrayProcessInstance");
+	m_hMutex = CreateMutex(NULL, TRUE, APP_NAME);
 	if (!m_hMutex)
 		ErrorExit(GetLastError());
 
 	if (GetLastError() == ERROR_ALREADY_EXISTS)
 	{
-		MessageBox(NULL, L"Already running.", L"KbdLedTray", MB_OK | MB_ICONINFORMATION);
+		MessageBox(NULL, L"Already running.", APP_NAME, MB_OK | MB_ICONINFORMATION);
 		return 0;
 	}
 
 	// Register class
-	WNDCLASSEX wcex = {0};
-	wcex.cbSize			= sizeof(WNDCLASSEX);
-	wcex.style			= CS_VREDRAW | CS_HREDRAW;
-	wcex.lpfnWndProc	= WndProc;
-	wcex.hInstance		= hInstance;
-	wcex.lpszClassName	= L"KbdLedTrayWnd";
-	wcex.hbrBackground	= (HBRUSH)(COLOR_WINDOW + 1);
-	wcex.hCursor		= LoadCursor(NULL, MAKEINTRESOURCE(IDC_ARROW));
+	WNDCLASSEX wcex;
+	SecureZeroMemory(&wcex, sizeof(wcex));
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = CS_VREDRAW | CS_HREDRAW;
+	wcex.lpfnWndProc = WndProc;
+	wcex.hInstance = m_hInstance;
+	wcex.lpszClassName = APP_NAME;
+	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wcex.hCursor = LoadCursor(NULL, MAKEINTRESOURCE(IDC_ARROW));
 	RegisterClassEx(&wcex);
 
 	// Create window
-	m_hInstance = hInstance;
-	m_hWnd = CreateWindow(wcex.lpszClassName, L"KbdLedTrayWnd", WS_OVERLAPPEDWINDOW, 
-		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, NULL, NULL, hInstance, NULL);
+	m_hWnd = CreateWindow(wcex.lpszClassName, APP_NAME, WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, NULL, NULL, m_hInstance, NULL);
 
-	if (!m_hWnd) 
+	if (!m_hWnd)
 		ErrorExit(GetLastError());
 
 	// Setup menu
@@ -124,10 +122,10 @@ HMENU CreateTaskbarMenu()
 
 void ErrorExit(DWORD dwError)
 {
-	wchar_t szError[256];
-	swprintf_s(szError, L"Exiting due to error: %d.", dwError);
-	MessageBox(NULL, szError, L"KbdLedTray", MB_OK | MB_ICONERROR);
-	exit(1);
+	wchar_t szError[20];
+	wsprintf(szError, L"Error: %d.", dwError);
+	MessageBox(NULL, szError, APP_NAME, MB_OK | MB_ICONERROR);
+	ExitProcess(1);
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -142,7 +140,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			PostQuitMessage(0);
 
 		break;
-	
+
 	case WM_TIMER:
 		if (wParam == IDT_KBDTIMER)
 			UpdateTrayIcon(false);
@@ -190,13 +188,13 @@ HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
 	HBITMAP hOldXorBitmap = (HBITMAP)SelectObject(hXorDC, hXorBitmap);
 
 	// AND mask
-	PatBlt(hAndDC, 0, 0, 16, 16, BLACKNESS);	
+	PatBlt(hAndDC, 0, 0, 16, 16, BLACKNESS);
 
 	// XOR mask
-	RECT rcBack = {0, 0, 16, 16};
-	RECT rcCaps = {2, 8, 4, 14};
-	RECT rcNum = {7, 8, 9, 14};
-	RECT rcScroll = {12, 8, 14, 14};
+	RECT rcBack = { 0, 0, 16, 16 };
+	RECT rcCaps = { 2, 8, 4, 14 };
+	RECT rcNum = { 7, 8, 9, 14 };
+	RECT rcScroll = { 12, 8, 14, 14 };
 
 	HBRUSH hBackBrush = CreateSolidBrush(RGB(64, 64, 64));
 	HBRUSH hBlackBrush = CreateSolidBrush(RGB(0, 0, 0));
@@ -210,12 +208,12 @@ HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
 	int nOldMode = SetBkMode(hXorDC, TRANSPARENT);
 	COLORREF crOld = SetTextColor(hXorDC, RGB(255, 255, 255));
 	int nFontHeight = -MulDiv(5, GetDeviceCaps(hXorDC, LOGPIXELSY), 72);
-	HFONT hFont = CreateFont(nFontHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, 
+	HFONT hFont = CreateFont(nFontHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
 		OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY, DEFAULT_PITCH, L"Small Fonts");
 	HFONT hOldFont = (HFONT)SelectObject(hXorDC, hFont);
 	TextOut(hXorDC, 0, -1, L"A", 1);
 	TextOut(hXorDC, 6, -1, L"1", 1);
-	HFONT hWingDingsFont = CreateFont(nFontHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, 
+	HFONT hWingDingsFont = CreateFont(nFontHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
 		OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY, DEFAULT_PITCH, L"Wingdings");
 	SelectObject(hXorDC, hWingDingsFont);
 	TextOut(hXorDC, 11, -1, L"ô", 1);
@@ -238,7 +236,8 @@ HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
 	DeleteDC(hXorDC);
 
 	// Create icon
-	ICONINFO icon = {0};
+	ICONINFO icon;
+	SecureZeroMemory(&icon, sizeof(icon));
 	icon.fIcon = TRUE;
 	icon.hbmMask = hAndBitmap;
 	icon.hbmColor = hXorBitmap;
@@ -254,7 +253,7 @@ HICON DrawCustomIcon(bool capsOn, bool numOn, bool scrollOn)
 void UpdateTrayIcon(bool remove)
 {
 	static bool iconRegistered = false;
-	
+
 	static bool capsOnPrevious = false;
 	static bool numOnPrevious = false;
 	static bool scrollOnPrevious = false;
@@ -270,24 +269,26 @@ void UpdateTrayIcon(bool remove)
 		numOnPrevious = numOn;
 		scrollOnPrevious = scrollOn;
 
-		NOTIFYICONDATA icon = {0};
+		NOTIFYICONDATA icon;
+		SecureZeroMemory(&icon, sizeof(icon));
 		icon.cbSize = sizeof(NOTIFYICONDATA);
 		icon.hWnd = m_hWnd;
 		icon.uCallbackMessage = WM_USER_NOTIFYICON;
 		icon.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-		icon.hIcon = DrawCustomIcon(capsOn, numOn, scrollOn);	
+		icon.hIcon = DrawCustomIcon(capsOn, numOn, scrollOn);
 		InvalidateRect(m_hWnd, NULL, TRUE);
 
-		swprintf_s(icon.szTip, L"Caps Lock: %s\nNum Lock: %s\nScroll Lock: %s", 
-			(capsOn ? L"ON" : L"OFF"), (numOn ? L"ON" : L"OFF"), (scrollOn ? L"ON" : L"OFF"));
+		wsprintf(icon.szTip, L"Caps Lock: %s\nNum Lock: %s\nScroll Lock: %s",
+			(capsOn ? ON_TEXT : OFF_TEXT), (numOn ? ON_TEXT : OFF_TEXT), (scrollOn ? ON_TEXT : OFF_TEXT));
 
-		DWORD message = remove 
-			? NIM_DELETE 
-			: iconRegistered
-				? NIM_MODIFY : 0;		
+		DWORD message = remove
+			? NIM_DELETE
+				: iconRegistered
+					? NIM_MODIFY 
+						: 0;
 
 		Shell_NotifyIcon(message, &icon);
-	
+
 		if (!iconRegistered)
 			iconRegistered = true;
 	}
